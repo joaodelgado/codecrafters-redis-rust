@@ -1,9 +1,9 @@
-use std::{io::Cursor, time::Duration};
+use std::{io::Cursor, ops::Deref, time::Duration};
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Buf;
 
-use crate::protocol::{Command, Set};
+use crate::protocol::{Command, InfoSection, Set};
 
 pub struct CommandParser<'a> {
     bytes: Cursor<&'a [u8]>,
@@ -36,6 +36,8 @@ impl<'a> CommandParser<'a> {
             return parse_set(&strings[1..]);
         } else if strings[0].to_ascii_lowercase() == b"get" {
             return parse_get(&strings[1..]);
+        } else if strings[0].to_ascii_lowercase() == b"info" {
+            return parse_info(&strings[1..]);
         }
 
         bail!(
@@ -164,4 +166,21 @@ fn parse_get(args: &[Vec<u8>]) -> Result<Command> {
         None => bail!("GET command requires an argument"),
         Some(bytes) => Ok(Command::Get(String::from_utf8(bytes.clone())?)),
     }
+}
+
+fn parse_info(args: &[Vec<u8>]) -> Result<Command> {
+    let mut sections = Vec::new();
+    for arg in args.iter().map(|arg| arg.to_ascii_lowercase()) {
+        match arg.deref() {
+            b"replication" => sections.push(InfoSection::Replication),
+            other => {
+                bail!(
+                    "Unsupported info section {}",
+                    String::from_utf8_lossy(&other)
+                );
+            }
+        }
+    }
+
+    return Ok(Command::Info(sections));
 }

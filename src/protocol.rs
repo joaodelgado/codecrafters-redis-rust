@@ -14,6 +14,7 @@ pub enum Command {
     Echo(String),
     Set(Set),
     Get(String),
+    Info(Vec<InfoSection>),
 }
 
 #[derive(Debug)]
@@ -21,4 +22,9 @@ pub struct Set {
     pub key: String,
     pub value: String,
     pub expiration: Option<Duration>,
+}
+
+#[derive(Debug)]
+pub enum InfoSection {
+    Replication,
 }

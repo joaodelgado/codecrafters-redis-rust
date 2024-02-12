@@ -53,6 +53,7 @@ impl Database {
                     _ => Ok(Element::NullBulkString),
                 }
             }
+            Command::Info(_section) => Ok(Element::BulkString(b"role:master".to_vec())),
         }
     }
 }
