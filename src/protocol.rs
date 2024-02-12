@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 
@@ -33,6 +35,13 @@ impl Element {
 pub enum Command {
     Ping(Option<String>),
     Echo(String),
-    Set(String, String),
+    Set(Set),
     Get(String),
+}
+
+#[derive(Debug)]
+pub struct Set {
+    pub key: String,
+    pub value: String,
+    pub expiration: Option<Duration>,
 }

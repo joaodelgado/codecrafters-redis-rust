@@ -1,9 +1,9 @@
-use std::io::Cursor;
+use std::{io::Cursor, time::Duration};
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use bytes::Buf;
 
-use crate::protocol::Command;
+use crate::protocol::{Command, Set};
 
 pub struct CommandParser<'a> {
     bytes: Cursor<&'a [u8]>,
@@ -123,13 +123,40 @@ fn parse_echo(args: &[Vec<u8>]) -> Result<Command> {
 }
 
 fn parse_set(args: &[Vec<u8>]) -> Result<Command> {
-    if args.len() != 2 {
-        bail!("SET command requires two arguments");
+    let mut args = args.iter();
+
+    let key = String::from_utf8(
+        args.next()
+            .ok_or(anyhow!("missing mandatory key argument"))?
+            .clone(),
+    )?;
+    let value = String::from_utf8(
+        args.next()
+            .ok_or(anyhow!("missing mandatory value argument"))?
+            .clone(),
+    )?;
+    let mut expiration = None;
+
+    match args.next() {
+        Some(arg) if arg.to_ascii_lowercase() == b"px" => {
+            let expiration_raw = args.next().ok_or(anyhow!(
+                "PX needs to be followed by the expiration date in milliseconds",
+            ))?;
+            let expiration_millis = String::from_utf8(expiration_raw.clone())
+                .context("parsing millis as utf8")?
+                .parse()
+                .context("parsing millis as number")?;
+            expiration = Some(Duration::from_millis(expiration_millis));
+        }
+        Some(other) => bail!("Unsupported argument {}", String::from_utf8_lossy(other)),
+        None => {}
     }
-    Ok(Command::Set(
-        String::from_utf8(args[0].clone())?,
-        String::from_utf8(args[1].clone())?,
-    ))
+
+    Ok(Command::Set(Set {
+        key,
+        value,
+        expiration,
+    }))
 }
 
 fn parse_get(args: &[Vec<u8>]) -> Result<Command> {
