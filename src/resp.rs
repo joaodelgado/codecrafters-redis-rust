@@ -3,7 +3,7 @@ use std::io::Cursor;
 use anyhow::{bail, Result};
 use bytes::Buf;
 
-use crate::processor::Command;
+use crate::protocol::Command;
 
 pub struct CommandParser<'a> {
     bytes: Cursor<&'a [u8]>,
@@ -32,6 +32,10 @@ impl<'a> CommandParser<'a> {
             return parse_ping(&strings[1..]);
         } else if strings[0].to_ascii_lowercase() == b"echo" {
             return parse_echo(&strings[1..]);
+        } else if strings[0].to_ascii_lowercase() == b"set" {
+            return parse_set(&strings[1..]);
+        } else if strings[0].to_ascii_lowercase() == b"get" {
+            return parse_get(&strings[1..]);
         }
 
         bail!(
@@ -115,5 +119,22 @@ fn parse_echo(args: &[Vec<u8>]) -> Result<Command> {
     match args.first() {
         None => bail!("ECHO command requires an argument"),
         Some(bytes) => Ok(Command::Echo(String::from_utf8(bytes.clone())?)),
+    }
+}
+
+fn parse_set(args: &[Vec<u8>]) -> Result<Command> {
+    if args.len() != 2 {
+        bail!("SET command requires two arguments");
+    }
+    Ok(Command::Set(
+        String::from_utf8(args[0].clone())?,
+        String::from_utf8(args[1].clone())?,
+    ))
+}
+
+fn parse_get(args: &[Vec<u8>]) -> Result<Command> {
+    match args.first() {
+        None => bail!("GET command requires an argument"),
+        Some(bytes) => Ok(Command::Get(String::from_utf8(bytes.clone())?)),
     }
 }

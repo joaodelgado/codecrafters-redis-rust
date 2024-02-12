@@ -1,7 +1,11 @@
-mod processor;
+mod database;
+mod protocol;
 mod resp;
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
+use database::Database;
 use resp::CommandParser;
 use tokio::{
     io::AsyncReadExt,
@@ -14,11 +18,14 @@ async fn main() -> Result<()> {
         .await
         .context("creating TCP server")?;
 
+    let database = Arc::new(Database::default());
+
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
+                let database = database.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_stream(stream).await {
+                    if let Err(e) = handle_stream(database.as_ref(), stream).await {
                         println!("error handling client: {}", e);
                     }
                 });
@@ -30,7 +37,7 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn handle_stream(mut stream: TcpStream) -> Result<()> {
+async fn handle_stream(database: &Database, mut stream: TcpStream) -> Result<()> {
     println!("Client connected");
     loop {
         let mut buf = [0; 1024];
@@ -44,10 +51,7 @@ async fn handle_stream(mut stream: TcpStream) -> Result<()> {
             return Ok(());
         }
 
-        CommandParser::new(&buf[..n])
-            .parse()?
-            .execute()?
-            .send(&mut stream)
-            .await?;
+        let command = CommandParser::new(&buf[..n]).parse()?;
+        database.execute(command).await?.send(&mut stream).await?;
     }
 }
