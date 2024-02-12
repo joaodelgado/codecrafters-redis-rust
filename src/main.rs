@@ -1,16 +1,19 @@
 mod database;
 mod protocol;
-mod resp;
+mod reader;
+mod writer;
 
 use std::{env, sync::Arc};
 
 use anyhow::{anyhow, bail, Context, Result};
 use database::Database;
-use resp::CommandParser;
+use reader::CommandParser;
 use tokio::{
-    io::AsyncReadExt,
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
+
+use crate::writer::serialize;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -63,6 +66,7 @@ async fn handle_stream(database: &Database, mut stream: TcpStream) -> Result<()>
         }
 
         let command = CommandParser::new(&buf[..n]).parse()?;
-        database.execute(command).await?.send(&mut stream).await?;
+        let result = database.execute(command).await?;
+        stream.write_all(&serialize(result)).await?;
     }
 }
