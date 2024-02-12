@@ -2,9 +2,9 @@ mod database;
 mod protocol;
 mod resp;
 
-use std::sync::Arc;
+use std::{env, sync::Arc};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use database::Database;
 use resp::CommandParser;
 use tokio::{
@@ -14,7 +14,18 @@ use tokio::{
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:6379")
+    let mut port = "6379".to_string();
+
+    let mut args = env::args().skip(1);
+    loop {
+        match args.next().as_deref() {
+            Some("--port") => port = args.next().ok_or(anyhow!("--port requires an argument"))?,
+            Some(other) => bail!("Unrecognized argument {other}"),
+            None => break,
+        }
+    }
+
+    let listener = TcpListener::bind(format!("127.0.0.1:{port}"))
         .await
         .context("creating TCP server")?;
 
