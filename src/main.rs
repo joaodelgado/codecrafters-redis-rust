@@ -18,19 +18,25 @@ use crate::writer::serialize;
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut port = "6379".to_string();
+
     let mut is_replica = false;
+    let mut master_host = None;
+    let mut master_port = None;
 
     let mut args = env::args().skip(1);
     loop {
         match args.next().as_deref() {
             Some("--port") => port = args.next().ok_or(anyhow!("--port requires an argument"))?,
             Some("--replicaof") => {
-                let _ = args
-                    .next()
-                    .ok_or(anyhow!("--replicaof requires a master host argument"))?;
-                let _ = args
-                    .next()
-                    .ok_or(anyhow!("--replicaof requires a master host argument"))?;
+                master_host = Some(
+                    args.next()
+                        .ok_or(anyhow!("--replicaof requires a master host argument"))?,
+                );
+                master_port = Some(
+                    args.next()
+                        .ok_or(anyhow!("--replicaof requires a master host argument"))?
+                        .parse()?,
+                );
                 is_replica = true;
             }
             Some(other) => bail!("Unrecognized argument {other}"),
@@ -42,7 +48,14 @@ async fn main() -> Result<()> {
         .await
         .context("creating TCP server")?;
 
-    let database = Arc::new(Database::new(is_replica));
+    let database: Arc<Database> = if is_replica {
+        Arc::new(Database::new_replica(
+            master_host.expect("if we are dealing with a replica, master_host must be set"),
+            master_port.expect("if we are dealing with a replica, master_port must be set"),
+        ))
+    } else {
+        Arc::new(Database::new_master())
+    };
 
     loop {
         match listener.accept().await {
