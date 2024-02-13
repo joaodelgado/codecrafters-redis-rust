@@ -176,11 +176,11 @@ fn parse_info(args: &[Vec<u8>]) -> Result<Command> {
             other => {
                 bail!(
                     "Unsupported info section {}",
-                    String::from_utf8_lossy(&other)
+                    String::from_utf8_lossy(other)
                 );
             }
         }
     }
 
-    return Ok(Command::Info(sections));
+    Ok(Command::Info(sections))
 }

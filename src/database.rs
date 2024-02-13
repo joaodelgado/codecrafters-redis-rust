@@ -20,12 +20,20 @@ impl Value {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Database {
     db: RwLock<HashMap<String, Value>>,
+    is_replica: bool,
 }
 
 impl Database {
+    pub fn new(is_replica: bool) -> Database {
+        Database {
+            db: Default::default(),
+            is_replica,
+        }
+    }
+
     pub async fn execute(&self, command: Command) -> Result<Element> {
         println!("Executing {command:?}");
         match command {
@@ -53,7 +61,11 @@ impl Database {
                     _ => Ok(Element::NullBulkString),
                 }
             }
-            Command::Info(_section) => Ok(Element::BulkString(b"role:master".to_vec())),
+            Command::Info(_section) => Ok(Element::BulkString(
+                format!("role:{}", if self.is_replica { "slave" } else { "master" })
+                    .as_bytes()
+                    .to_vec(),
+            )),
         }
     }
 }

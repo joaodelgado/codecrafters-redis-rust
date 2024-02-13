@@ -24,7 +24,7 @@ pub struct Set {
     pub expiration: Option<Duration>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum InfoSection {
     Replication,
 }

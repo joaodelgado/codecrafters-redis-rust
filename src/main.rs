@@ -18,11 +18,21 @@ use crate::writer::serialize;
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut port = "6379".to_string();
+    let mut is_replica = false;
 
     let mut args = env::args().skip(1);
     loop {
         match args.next().as_deref() {
             Some("--port") => port = args.next().ok_or(anyhow!("--port requires an argument"))?,
+            Some("--replicaof") => {
+                let _ = args
+                    .next()
+                    .ok_or(anyhow!("--replicaof requires a master host argument"))?;
+                let _ = args
+                    .next()
+                    .ok_or(anyhow!("--replicaof requires a master host argument"))?;
+                is_replica = true;
+            }
             Some(other) => bail!("Unrecognized argument {other}"),
             None => break,
         }
@@ -32,7 +42,7 @@ async fn main() -> Result<()> {
         .await
         .context("creating TCP server")?;
 
-    let database = Arc::new(Database::default());
+    let database = Arc::new(Database::new(is_replica));
 
     loop {
         match listener.accept().await {
