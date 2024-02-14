@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -8,7 +8,7 @@ use tokio::{
 };
 
 use crate::{
-    protocol::{Command, Element, ReplOpt},
+    protocol::{Command, Element, Psync, ReplOpt},
     reader::ElementParser,
     writer::{serialize_command, serialize_element},
 };
@@ -30,6 +30,7 @@ impl Value {
 
 pub trait RoleInfo: std::fmt::Debug {
     fn as_info_section(&self) -> String;
+    fn handle_psync(&self, psync: Psync) -> Result<Element>;
 }
 
 #[derive(Debug)]
@@ -53,11 +54,22 @@ master_repl_offset:{}
             self.replication_id, self.replication_offset
         )
     }
+
+    fn handle_psync(&self, _psync: Psync) -> Result<Element> {
+        Ok(Element::SimpleString(format!(
+            "FULLRESYNC {} {}",
+            self.replication_id, self.replication_offset
+        )))
+    }
 }
 
 impl RoleInfo for ReplicaInfo {
     fn as_info_section(&self) -> String {
         "role:slave".to_string()
+    }
+
+    fn handle_psync(&self, _psync: Psync) -> Result<Element> {
+        bail!("replicas don't support PSYNC commands")
     }
 }
 
@@ -116,7 +128,8 @@ impl<W: RoleInfo + Send + Sync + 'static> Database<W> {
 
     async fn execute(&self, command: Command) -> Result<Element> {
         println!("Executing {command:?}");
-        match command {
+
+        let result = match command {
             Command::Ping(message) => Ok(Element::SimpleString(
                 message.unwrap_or_else(|| "PONG".to_string()),
             )),
@@ -145,7 +158,11 @@ impl<W: RoleInfo + Send + Sync + 'static> Database<W> {
                 self.role.as_info_section().as_bytes().to_vec(),
             )),
             Command::ReplConf(_repl_conf) => Ok(Element::SimpleString("OK".to_string())),
-        }
+            Command::Psync(psync) => self.role.handle_psync(psync),
+        };
+
+        println!("Result: {result:?}");
+        result
     }
 }
 
@@ -185,6 +202,11 @@ impl Database<ReplicaInfo> {
             .await?;
         self.send_command_to_master(Command::ReplConf(ReplOpt::Capability))
             .await?;
+        self.send_command_to_master(Command::Psync(Psync {
+            replication_id: None,
+            replication_offset: None,
+        }))
+        .await?;
 
         Ok(())
     }

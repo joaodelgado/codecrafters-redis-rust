@@ -3,7 +3,7 @@ use std::{io::Cursor, ops::Deref, time::Duration};
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Buf;
 
-use crate::protocol::{Command, Element, InfoSection, ReplOpt, Set};
+use crate::protocol::{Command, Element, InfoSection, Psync, ReplOpt, Set};
 
 pub struct ElementParser<'a> {
     bytes: Cursor<&'a [u8]>,
@@ -139,21 +139,16 @@ impl TryInto<Command> for Element {
             bail!("Expected at least 1 arg, but got none");
         }
 
-        if args[0].to_ascii_lowercase() == b"ping" {
-            return parse_ping(&args[1..]);
-        } else if args[0].to_ascii_lowercase() == b"echo" {
-            return parse_echo(&args[1..]);
-        } else if args[0].to_ascii_lowercase() == b"set" {
-            return parse_set(&args[1..]);
-        } else if args[0].to_ascii_lowercase() == b"get" {
-            return parse_get(&args[1..]);
-        } else if args[0].to_ascii_lowercase() == b"info" {
-            return parse_info(&args[1..]);
-        } else if args[0].to_ascii_lowercase() == b"replconf" {
-            return parse_replconf(&args[1..]);
+        match args[0].to_ascii_lowercase().deref() {
+            b"ping" => parse_ping(&args[1..]),
+            b"echo" => parse_echo(&args[1..]),
+            b"set" => parse_set(&args[1..]),
+            b"get" => parse_get(&args[1..]),
+            b"info" => parse_info(&args[1..]),
+            b"replconf" => parse_replconf(&args[1..]),
+            b"psync" => parse_psync(&args[1..]),
+            other => bail!("Unrecognized command {}", String::from_utf8_lossy(other)),
         }
-
-        bail!("Unrecognized command {}", String::from_utf8_lossy(&args[0]));
     }
 }
 
@@ -264,4 +259,32 @@ fn parse_replconf(args: &[Vec<u8>]) -> Result<Command> {
     };
 
     Ok(Command::ReplConf(repl_opt))
+}
+
+fn parse_psync(args: &[Vec<u8>]) -> Result<Command> {
+    let mut args = args.iter();
+    let mut replication_id = Some(String::from_utf8(
+        args.next()
+            .ok_or(anyhow!("Missing required argument replication_id"))?
+            .clone(),
+    )?);
+    if replication_id.as_deref() == Some("?") {
+        replication_id = None;
+    }
+
+    let replication_offset = Some(String::from_utf8(
+        args.next()
+            .ok_or(anyhow!("Missing required argument replication_id"))?
+            .clone(),
+    )?)
+    .filter(|offset| offset != "-1");
+    let replication_offset = match replication_offset {
+        Some(offset) => Some(offset.parse()?),
+        None => None,
+    };
+
+    Ok(Command::Psync(Psync {
+        replication_id,
+        replication_offset,
+    }))
 }

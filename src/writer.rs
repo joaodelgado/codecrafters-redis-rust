@@ -12,7 +12,7 @@ pub fn serialize_command(command: Command) -> Vec<u8> {
         }
         Command::Echo(message) => vec![
             Element::BulkString(b"ECHO".to_vec()),
-            Element::BulkString(message.as_bytes().to_vec()),
+            Element::BulkString(message.into()),
         ],
         Command::Set(_) => todo!(),
         Command::Get(_) => todo!(),
@@ -31,6 +31,22 @@ pub fn serialize_command(command: Command) -> Vec<u8> {
             }
             args
         }
+        Command::Psync(psync) => vec![
+            Element::BulkString(b"PSYNC".to_vec()),
+            Element::BulkString(
+                psync
+                    .replication_id
+                    .unwrap_or_else(|| "?".to_string())
+                    .into(),
+            ),
+            Element::BulkString(
+                psync
+                    .replication_offset
+                    .map(|offset| format!("{offset}"))
+                    .unwrap_or_else(|| "-1".to_string())
+                    .into(),
+            ),
+        ],
     };
     serialize_element(Element::Array(args))
 }

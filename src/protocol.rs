@@ -17,6 +17,7 @@ pub enum Command {
     Get(String),
     Info(Vec<InfoSection>),
     ReplConf(ReplOpt),
+    Psync(Psync),
 }
 
 #[derive(Debug)]
@@ -35,4 +36,10 @@ pub enum InfoSection {
 pub enum ReplOpt {
     ListeningPort(usize),
     Capability,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Psync {
+    pub replication_id: Option<String>,
+    pub replication_offset: Option<u128>,
 }
