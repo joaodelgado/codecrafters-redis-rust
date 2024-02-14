@@ -10,7 +10,7 @@ use tokio::{
 use crate::{
     protocol::{Command, Element},
     reader::CommandParser,
-    writer::serialize,
+    writer::{serialize_command, serialize_element},
 };
 
 #[derive(Debug)]
@@ -40,8 +40,7 @@ pub struct MasterInfo {
 
 #[derive(Debug)]
 pub struct ReplicaInfo {
-    _master_host: String,
-    _master_port: usize,
+    master: TcpStream,
 }
 
 impl RoleInfo for MasterInfo {
@@ -69,10 +68,11 @@ pub struct Database<W: Send> {
 }
 
 impl<W: RoleInfo + Send + Sync + 'static> Database<W> {
-    pub async fn listen(self, address: String) -> Result<()> {
+    pub async fn listen(self, address: &str) -> Result<()> {
         let listener = TcpListener::bind(address)
             .await
             .context("creating TCP server")?;
+        println!("Listening on {address}");
 
         let arc_self = Arc::new(self);
 
@@ -93,7 +93,7 @@ impl<W: RoleInfo + Send + Sync + 'static> Database<W> {
         }
     }
 
-    pub async fn handle_stream(&self, mut stream: TcpStream) -> Result<()> {
+    async fn handle_stream(&self, mut stream: TcpStream) -> Result<()> {
         println!("Client connected");
         loop {
             let mut buf = [0; 1024];
@@ -109,11 +109,11 @@ impl<W: RoleInfo + Send + Sync + 'static> Database<W> {
 
             let command = CommandParser::new(&buf[..n]).parse()?;
             let result = self.execute(command).await?;
-            stream.write_all(&serialize(result)).await?;
+            stream.write_all(&serialize_element(result)).await?;
         }
     }
 
-    pub async fn execute(&self, command: Command) -> Result<Element> {
+    async fn execute(&self, command: Command) -> Result<Element> {
         println!("Executing {command:?}");
         match command {
             Command::Ping(message) => Ok(Element::SimpleString(
@@ -160,13 +160,25 @@ impl Database<MasterInfo> {
 }
 
 impl Database<ReplicaInfo> {
-    pub fn new_replica(master_host: String, master_port: usize) -> Self {
-        Database {
+    pub async fn new_replica(master_host: String, master_port: usize) -> Result<Self> {
+        let mut database = Database {
             db: Default::default(),
             role: ReplicaInfo {
-                _master_host: master_host,
-                _master_port: master_port,
+                master: TcpStream::connect(format!("{master_host}:{master_port}")).await?,
             },
-        }
+        };
+
+        database.handshake().await?;
+
+        Ok(database)
+    }
+
+    async fn handshake(&mut self) -> Result<()> {
+        println!("Handshaking with master");
+
+        let ping = Command::Ping(None);
+        self.role.master.write_all(&serialize_command(ping)).await?;
+
+        Ok(())
     }
 }

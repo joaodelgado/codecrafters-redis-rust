@@ -6,6 +6,7 @@ pub enum Element {
     SimpleString(String),
     BulkString(Vec<u8>),
     NullBulkString,
+    Array(Vec<Element>),
 }
 
 #[derive(Debug)]

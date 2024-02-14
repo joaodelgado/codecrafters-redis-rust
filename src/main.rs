@@ -44,9 +44,12 @@ async fn main() -> Result<()> {
             master_host.expect("if we are dealing with a replica, master_host must be set"),
             master_port.expect("if we are dealing with a replica, master_port must be set"),
         )
-        .listen(address)
-        .await
+        .await?
+        .listen(&address)
+        .await?;
     } else {
-        Database::new_master().listen(address).await
+        Database::new_master().listen(&address).await?;
     }
+
+    Ok(())
 }
