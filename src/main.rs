@@ -3,17 +3,10 @@ mod protocol;
 mod reader;
 mod writer;
 
-use std::{env, sync::Arc};
+use std::env;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Result};
 use database::Database;
-use reader::CommandParser;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
-};
-
-use crate::writer::serialize;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -44,52 +37,16 @@ async fn main() -> Result<()> {
         }
     }
 
-    let listener = TcpListener::bind(format!("127.0.0.1:{port}"))
-        .await
-        .context("creating TCP server")?;
+    let address = format!("127.0.0.1:{port}");
 
-    let database: Arc<Database> = if is_replica {
-        Arc::new(Database::new_replica(
+    if is_replica {
+        Database::new_replica(
             master_host.expect("if we are dealing with a replica, master_host must be set"),
             master_port.expect("if we are dealing with a replica, master_port must be set"),
-        ))
+        )
+        .listen(address)
+        .await
     } else {
-        Arc::new(Database::new_master())
-    };
-
-    loop {
-        match listener.accept().await {
-            Ok((stream, _addr)) => {
-                let database = database.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = handle_stream(database.as_ref(), stream).await {
-                        println!("error handling client: {}", e);
-                    }
-                });
-            }
-            Err(e) => {
-                println!("error accepting connection: {}", e);
-            }
-        }
-    }
-}
-
-async fn handle_stream(database: &Database, mut stream: TcpStream) -> Result<()> {
-    println!("Client connected");
-    loop {
-        let mut buf = [0; 1024];
-        let n = stream
-            .read(&mut buf)
-            .await
-            .context("read command from client")?;
-
-        if n == 0 {
-            println!("Client disconnected");
-            return Ok(());
-        }
-
-        let command = CommandParser::new(&buf[..n]).parse()?;
-        let result = database.execute(command).await?;
-        stream.write_all(&serialize(result)).await?;
+        Database::new_master().listen(address).await
     }
 }

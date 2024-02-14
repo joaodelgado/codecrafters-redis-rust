@@ -1,9 +1,17 @@
-use std::{collections::HashMap, time::Instant};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
-use anyhow::Result;
-use tokio::sync::RwLock;
+use anyhow::{Context, Result};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    sync::RwLock,
+};
 
-use crate::protocol::{Command, Element};
+use crate::{
+    protocol::{Command, Element},
+    reader::CommandParser,
+    writer::serialize,
+};
 
 #[derive(Debug)]
 struct Value {
@@ -25,13 +33,13 @@ pub trait RoleInfo: std::fmt::Debug {
 }
 
 #[derive(Debug)]
-struct MasterInfo {
+pub struct MasterInfo {
     replication_id: String,
     replication_offset: u128,
 }
 
 #[derive(Debug)]
-struct ReplicaInfo {
+pub struct ReplicaInfo {
     _master_host: String,
     _master_port: usize,
 }
@@ -55,12 +63,56 @@ impl RoleInfo for ReplicaInfo {
 }
 
 #[derive(Debug)]
-pub struct Database {
+pub struct Database<W: Send> {
     db: RwLock<HashMap<String, Value>>,
-    role: Box<dyn RoleInfo + Send + Sync>,
+    role: W,
 }
 
-impl Database {
+impl<W: RoleInfo + Send + Sync + 'static> Database<W> {
+    pub async fn listen(self, address: String) -> Result<()> {
+        let listener = TcpListener::bind(address)
+            .await
+            .context("creating TCP server")?;
+
+        let arc_self = Arc::new(self);
+
+        loop {
+            match listener.accept().await {
+                Ok((stream, _addr)) => {
+                    let s = arc_self.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = s.handle_stream(stream).await {
+                            println!("error handling client: {}", e);
+                        }
+                    });
+                }
+                Err(e) => {
+                    println!("error accepting connection: {}", e);
+                }
+            }
+        }
+    }
+
+    pub async fn handle_stream(&self, mut stream: TcpStream) -> Result<()> {
+        println!("Client connected");
+        loop {
+            let mut buf = [0; 1024];
+            let n = stream
+                .read(&mut buf)
+                .await
+                .context("read command from client")?;
+
+            if n == 0 {
+                println!("Client disconnected");
+                return Ok(());
+            }
+
+            let command = CommandParser::new(&buf[..n]).parse()?;
+            let result = self.execute(command).await?;
+            stream.write_all(&serialize(result)).await?;
+        }
+    }
+
     pub async fn execute(&self, command: Command) -> Result<Element> {
         println!("Executing {command:?}");
         match command {
@@ -95,26 +147,26 @@ impl Database {
     }
 }
 
-impl Database {
-    pub fn new_master() -> Database {
+impl Database<MasterInfo> {
+    pub fn new_master() -> Self {
         Database {
             db: Default::default(),
-            role: Box::new(MasterInfo {
+            role: MasterInfo {
                 replication_id: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
                 replication_offset: 0,
-            }),
+            },
         }
     }
 }
 
-impl Database {
-    pub fn new_replica(master_host: String, master_port: usize) -> Database {
+impl Database<ReplicaInfo> {
+    pub fn new_replica(master_host: String, master_port: usize) -> Self {
         Database {
             db: Default::default(),
-            role: Box::new(ReplicaInfo {
+            role: ReplicaInfo {
                 _master_host: master_host,
                 _master_port: master_port,
-            }),
+            },
         }
     }
 }
