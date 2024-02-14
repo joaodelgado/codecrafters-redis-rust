@@ -3,66 +3,27 @@ use std::{io::Cursor, ops::Deref, time::Duration};
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Buf;
 
-use crate::protocol::{Command, InfoSection, Set};
+use crate::protocol::{Command, Element, InfoSection, Set};
 
-pub struct CommandParser<'a> {
+pub struct ElementParser<'a> {
     bytes: Cursor<&'a [u8]>,
 }
 
-impl<'a> CommandParser<'a> {
-    pub fn new(bytes: &'a [u8]) -> CommandParser<'a> {
-        CommandParser {
+impl<'a> ElementParser<'a> {
+    pub fn new(bytes: &'a [u8]) -> ElementParser<'a> {
+        ElementParser {
             bytes: Cursor::new(bytes),
         }
     }
 
-    pub fn parse(&mut self) -> Result<Command> {
-        self.consume_byte(b'*')?;
-        let n = self.read_usize_crlf()?;
-        if n == 0 {
-            bail!("Expected at least 1 string, but got none");
+    pub fn parse(&mut self) -> Result<Element> {
+        match self.read_u8() {
+            Some(b'+') => self.read_simple_string(),
+            Some(b'$') => self.read_bulk_string(),
+            Some(b'*') => self.read_array(),
+            Some(other) => bail!("Unsupported element '{}'", other.escape_ascii()),
+            None => bail!("Expected at least one byte"),
         }
-
-        let mut strings = Vec::with_capacity(n);
-        for _ in 0..n {
-            strings.push(self.expect_bulk_string()?);
-        }
-
-        if strings[0].to_ascii_lowercase() == b"ping" {
-            return parse_ping(&strings[1..]);
-        } else if strings[0].to_ascii_lowercase() == b"echo" {
-            return parse_echo(&strings[1..]);
-        } else if strings[0].to_ascii_lowercase() == b"set" {
-            return parse_set(&strings[1..]);
-        } else if strings[0].to_ascii_lowercase() == b"get" {
-            return parse_get(&strings[1..]);
-        } else if strings[0].to_ascii_lowercase() == b"info" {
-            return parse_info(&strings[1..]);
-        }
-
-        bail!(
-            "Unrecognized command {}",
-            String::from_utf8_lossy(&strings[0])
-        );
-    }
-
-    fn expect_bulk_string(&mut self) -> Result<Vec<u8>> {
-        self.consume_byte(b'$')?;
-        let n = self.read_usize_crlf()?;
-        if self.bytes.remaining() < n {
-            bail!(
-                "Attempted to read string of length {}, but buffer only has {} bytes remaining",
-                n,
-                self.bytes.remaining()
-            );
-        }
-
-        let s = self.bytes.chunk()[..n].to_vec();
-        self.bytes.advance(n);
-
-        self.expect_crlf()?;
-
-        Ok(s)
     }
 
     fn read_u8(&mut self) -> Option<u8> {
@@ -71,22 +32,6 @@ impl<'a> CommandParser<'a> {
         } else {
             Some(self.bytes.get_u8())
         }
-    }
-
-    fn read_usize_crlf(&mut self) -> Result<usize> {
-        let mut value: usize = 0;
-        loop {
-            match self.read_u8() {
-                Some(b) if b.is_ascii_digit() => value = value * 10 + usize::from(b - b'0'),
-                Some(b'\r') => break,
-                Some(other) => bail!("Expected digit, found {}", other.escape_ascii().to_string()),
-                None => bail!("buffer terminated before \\r\\n"),
-            }
-        }
-
-        self.consume_byte(b'\n')?;
-
-        Ok(value)
     }
 
     fn consume_byte(&mut self, b: u8) -> Result<()> {
@@ -107,6 +52,106 @@ impl<'a> CommandParser<'a> {
     fn expect_crlf(&mut self) -> Result<()> {
         self.consume_byte(b'\r')?;
         self.consume_byte(b'\n')
+    }
+
+    fn read_simple_string(&mut self) -> Result<Element> {
+        let mut buffer = Vec::new();
+        loop {
+            match self.read_u8() {
+                Some(b'\r') => break,
+                Some(b) => buffer.push(b),
+                None => bail!("buffer terminated before \\r\\n"),
+            }
+        }
+
+        self.consume_byte(b'\n')?;
+
+        Ok(Element::SimpleString(String::from_utf8(buffer)?))
+    }
+
+    fn read_usize_crlf(&mut self) -> Result<usize> {
+        let mut value: usize = 0;
+        loop {
+            match self.read_u8() {
+                Some(b) if b.is_ascii_digit() => value = value * 10 + usize::from(b - b'0'),
+                Some(b'\r') => break,
+                Some(other) => bail!("Expected digit, found {}", other.escape_ascii().to_string()),
+                None => bail!("buffer terminated before \\r\\n"),
+            }
+        }
+
+        self.consume_byte(b'\n')?;
+
+        Ok(value)
+    }
+
+    fn read_bulk_string(&mut self) -> Result<Element> {
+        let n = self.read_usize_crlf()?;
+        if self.bytes.remaining() < n {
+            bail!(
+                "Attempted to read string of length {}, but buffer only has {} bytes remaining",
+                n,
+                self.bytes.remaining()
+            );
+        }
+
+        let s = self.bytes.chunk()[..n].to_vec();
+        self.bytes.advance(n);
+
+        self.expect_crlf()?;
+
+        Ok(Element::BulkString(s))
+    }
+
+    fn read_array(&mut self) -> Result<Element> {
+        let n = self.read_usize_crlf()?;
+        let mut elements = Vec::with_capacity(n);
+
+        for _ in 0..n {
+            elements.push(self.parse()?)
+        }
+
+        Ok(Element::Array(elements))
+    }
+}
+
+impl TryInto<Command> for Element {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> std::result::Result<Command, Self::Error> {
+        let args = match self {
+            Element::Array(elements) => {
+                let mut args = Vec::with_capacity(elements.len());
+                for element in elements {
+                    match element {
+                        Element::BulkString(bytes) => args.push(bytes),
+                        other => {
+                            bail!("All args of a command must be a bulk string, got {other:?} instead")
+                        }
+                    }
+                }
+                args
+            }
+            _ => bail!("Commands must be an array of bulk strings, got {self:?} instead"),
+        };
+
+        if args.is_empty() {
+            bail!("Expected at least 1 arg, but got none");
+        }
+
+        if args[0].to_ascii_lowercase() == b"ping" {
+            return parse_ping(&args[1..]);
+        } else if args[0].to_ascii_lowercase() == b"echo" {
+            return parse_echo(&args[1..]);
+        } else if args[0].to_ascii_lowercase() == b"set" {
+            return parse_set(&args[1..]);
+        } else if args[0].to_ascii_lowercase() == b"get" {
+            return parse_get(&args[1..]);
+        } else if args[0].to_ascii_lowercase() == b"info" {
+            return parse_info(&args[1..]);
+        }
+
+        bail!("Unrecognized command {}", String::from_utf8_lossy(&args[0]));
     }
 }
 

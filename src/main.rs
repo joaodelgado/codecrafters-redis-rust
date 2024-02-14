@@ -10,7 +10,7 @@ use database::Database;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut port = "6379".to_string();
+    let mut port = 6379;
 
     let mut is_replica = false;
     let mut master_host = None;
@@ -19,7 +19,12 @@ async fn main() -> Result<()> {
     let mut args = env::args().skip(1);
     loop {
         match args.next().as_deref() {
-            Some("--port") => port = args.next().ok_or(anyhow!("--port requires an argument"))?,
+            Some("--port") => {
+                port = args
+                    .next()
+                    .ok_or(anyhow!("--port requires an argument"))?
+                    .parse()?
+            }
             Some("--replicaof") => {
                 master_host = Some(
                     args.next()
@@ -37,18 +42,17 @@ async fn main() -> Result<()> {
         }
     }
 
-    let address = format!("127.0.0.1:{port}");
-
     if is_replica {
         Database::new_replica(
+            port,
             master_host.expect("if we are dealing with a replica, master_host must be set"),
             master_port.expect("if we are dealing with a replica, master_port must be set"),
         )
         .await?
-        .listen(&address)
+        .listen()
         .await?;
     } else {
-        Database::new_master().listen(&address).await?;
+        Database::new_master(port).listen().await?;
     }
 
     Ok(())

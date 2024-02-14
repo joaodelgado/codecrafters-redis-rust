@@ -9,7 +9,7 @@ use tokio::{
 
 use crate::{
     protocol::{Command, Element},
-    reader::CommandParser,
+    reader::ElementParser,
     writer::{serialize_command, serialize_element},
 };
 
@@ -63,16 +63,17 @@ impl RoleInfo for ReplicaInfo {
 
 #[derive(Debug)]
 pub struct Database<W: Send> {
+    port: usize,
     db: RwLock<HashMap<String, Value>>,
     role: W,
 }
 
 impl<W: RoleInfo + Send + Sync + 'static> Database<W> {
-    pub async fn listen(self, address: &str) -> Result<()> {
-        let listener = TcpListener::bind(address)
+    pub async fn listen(self) -> Result<()> {
+        let listener = TcpListener::bind(format!("127.0.0.1:{}", self.port))
             .await
             .context("creating TCP server")?;
-        println!("Listening on {address}");
+        println!("Listening on port {}", self.port);
 
         let arc_self = Arc::new(self);
 
@@ -107,7 +108,7 @@ impl<W: RoleInfo + Send + Sync + 'static> Database<W> {
                 return Ok(());
             }
 
-            let command = CommandParser::new(&buf[..n]).parse()?;
+            let command = ElementParser::new(&buf[..n]).parse()?.try_into()?;
             let result = self.execute(command).await?;
             stream.write_all(&serialize_element(result)).await?;
         }
@@ -148,8 +149,9 @@ impl<W: RoleInfo + Send + Sync + 'static> Database<W> {
 }
 
 impl Database<MasterInfo> {
-    pub fn new_master() -> Self {
+    pub fn new_master(port: usize) -> Self {
         Database {
+            port,
             db: Default::default(),
             role: MasterInfo {
                 replication_id: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
@@ -160,8 +162,9 @@ impl Database<MasterInfo> {
 }
 
 impl Database<ReplicaInfo> {
-    pub async fn new_replica(master_host: String, master_port: usize) -> Result<Self> {
+    pub async fn new_replica(port: usize, master_host: String, master_port: usize) -> Result<Self> {
         let mut database = Database {
+            port,
             db: Default::default(),
             role: ReplicaInfo {
                 master: TcpStream::connect(format!("{master_host}:{master_port}")).await?,
@@ -176,9 +179,22 @@ impl Database<ReplicaInfo> {
     async fn handshake(&mut self) -> Result<()> {
         println!("Handshaking with master");
 
-        let ping = Command::Ping(None);
-        self.role.master.write_all(&serialize_command(ping)).await?;
+        self.send_command_to_master(Command::Ping(None)).await?;
 
         Ok(())
+    }
+
+    async fn send_command_to_master(&mut self, command: Command) -> Result<Element> {
+        println!("Sending {command:?}");
+        self.role
+            .master
+            .write_all(&serialize_command(command))
+            .await?;
+        let mut response = [0; 1024];
+        let n = self.role.master.read(&mut response).await?;
+        let result = ElementParser::new(&response[..n]).parse();
+
+        println!("Got {result:?}");
+        result
     }
 }
