@@ -3,7 +3,7 @@ use std::{io::Cursor, ops::Deref, time::Duration};
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Buf;
 
-use crate::protocol::{Command, Element, InfoSection, Set};
+use crate::protocol::{Command, Element, InfoSection, ReplOpt, Set};
 
 pub struct ElementParser<'a> {
     bytes: Cursor<&'a [u8]>,
@@ -149,6 +149,8 @@ impl TryInto<Command> for Element {
             return parse_get(&args[1..]);
         } else if args[0].to_ascii_lowercase() == b"info" {
             return parse_info(&args[1..]);
+        } else if args[0].to_ascii_lowercase() == b"replconf" {
+            return parse_replconf(&args[1..]);
         }
 
         bail!("Unrecognized command {}", String::from_utf8_lossy(&args[0]));
@@ -228,4 +230,38 @@ fn parse_info(args: &[Vec<u8>]) -> Result<Command> {
     }
 
     Ok(Command::Info(sections))
+}
+
+fn parse_replconf(args: &[Vec<u8>]) -> Result<Command> {
+    let mut args = args.iter();
+    let repl_opt = match args.next().map(|arg| arg.to_ascii_lowercase()).as_deref() {
+        Some(b"listening-port") => {
+            let port = String::from_utf8(
+                args.next()
+                    .ok_or(anyhow!(
+                        "listening-port replication option requires an argument"
+                    ))?
+                    .to_vec(),
+            )?
+            .parse()?;
+            ReplOpt::ListeningPort(port)
+        }
+        Some(b"capa") => {
+            let _capability = args
+                .next()
+                .ok_or(anyhow!("capa replication option requires an argument"))?;
+            ReplOpt::Capability
+        }
+        Some(other) => {
+            bail!(
+                "Unsupported replication option {}",
+                String::from_utf8_lossy(other)
+            );
+        }
+        None => {
+            bail!("Expected at least one replication option");
+        }
+    };
+
+    Ok(Command::ReplConf(repl_opt))
 }

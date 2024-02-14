@@ -16,6 +16,7 @@ pub enum Command {
     Set(Set),
     Get(String),
     Info(Vec<InfoSection>),
+    ReplConf(ReplOpt),
 }
 
 #[derive(Debug)]
@@ -28,4 +29,10 @@ pub struct Set {
 #[derive(Debug, PartialEq, Eq)]
 pub enum InfoSection {
     Replication,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReplOpt {
+    ListeningPort(usize),
+    Capability,
 }

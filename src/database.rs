@@ -8,7 +8,7 @@ use tokio::{
 };
 
 use crate::{
-    protocol::{Command, Element},
+    protocol::{Command, Element, ReplOpt},
     reader::ElementParser,
     writer::{serialize_command, serialize_element},
 };
@@ -144,6 +144,7 @@ impl<W: RoleInfo + Send + Sync + 'static> Database<W> {
             Command::Info(_section) => Ok(Element::BulkString(
                 self.role.as_info_section().as_bytes().to_vec(),
             )),
+            Command::ReplConf(_repl_conf) => Ok(Element::SimpleString("OK".to_string())),
         }
     }
 }
@@ -180,6 +181,10 @@ impl Database<ReplicaInfo> {
         println!("Handshaking with master");
 
         self.send_command_to_master(Command::Ping(None)).await?;
+        self.send_command_to_master(Command::ReplConf(ReplOpt::ListeningPort(self.port)))
+            .await?;
+        self.send_command_to_master(Command::ReplConf(ReplOpt::Capability))
+            .await?;
 
         Ok(())
     }
