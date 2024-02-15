@@ -70,5 +70,15 @@ pub fn serialize_element(element: Element) -> Vec<u8> {
             }
             bytes
         }
+        Element::RdbFile(data) => {
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(format!("${}\r\n", data.len()).as_bytes());
+            bytes.extend_from_slice(&data);
+            bytes
+        }
+        Element::MultiInternal(elements) => elements
+            .into_iter()
+            .flat_map(|element| serialize_element(element).into_iter())
+            .collect(),
     }
 }

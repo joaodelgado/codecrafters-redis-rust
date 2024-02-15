@@ -1,6 +1,7 @@
 mod database;
 mod protocol;
 mod reader;
+mod utils;
 mod writer;
 
 use std::env;

@@ -7,6 +7,8 @@ pub enum Element {
     BulkString(Vec<u8>),
     NullBulkString,
     Array(Vec<Element>),
+    RdbFile(Vec<u8>),
+    MultiInternal(Vec<Element>),
 }
 
 #[derive(Debug)]

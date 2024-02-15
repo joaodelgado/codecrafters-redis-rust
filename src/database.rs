@@ -10,6 +10,7 @@ use tokio::{
 use crate::{
     protocol::{Command, Element, Psync, ReplOpt},
     reader::ElementParser,
+    utils::decode_hex,
     writer::{serialize_command, serialize_element},
 };
 
@@ -56,10 +57,14 @@ master_repl_offset:{}
     }
 
     fn handle_psync(&self, _psync: Psync) -> Result<Element> {
-        Ok(Element::SimpleString(format!(
+        let fullresync = Element::SimpleString(format!(
             "FULLRESYNC {} {}",
             self.replication_id, self.replication_offset
-        )))
+        ));
+        let rdb = Element::RdbFile(
+            decode_hex("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2")
+        );
+        Ok(Element::MultiInternal(vec![fullresync, rdb]))
     }
 }
 
